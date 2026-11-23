@@ -1,205 +1,165 @@
 # DNSHollow
 
-**A centralized, multi-signal DNS tunneling detection and blocking system for Linux and Windows.**
-
-DNSHollow finds DNS tunneling (data theft and command-and-control hidden inside DNS names) by combining seven behaviour
-indicators into one explainable score. Light agents on your computers send DNS metadata to one manager. The manager scores
-it, shows evidence on a dashboard, and can block the bad domain on the affected machines, by one click or automatically.
-
----
-
-## Why
-
-DNS is allowed through almost every firewall and is rarely inspected. Tools like iodine and dnscat2 use that to hide traffic
-in long random subdomains such as `x8f3k2q9...attacker.com`.
-
-| Existing tool | Gap |
-|---|---|
-| Snort | Fixed signatures. New or custom tunneling tools are missed. |
-| Wazuh | Only three conditions (encoding, depth, record type). Many tunnels are missed. |
-| **DNSHollow** | Seven combined indicators, two time windows, cross-host correlation, one-click blocking. No machine learning, so every alert is explainable. |
-
-## Features
-
-- **Seven indicators, one score (0 to 100):** entropy, subdomain depth, record types, query frequency, beacon timing, unique subdomains, data volume.
-- **Two profiles:** *fast* (last 5 minutes, every 30 s) for noisy tunnels, *slow* (last 24 hours, every 5 min) for stealth beacons.
-- **Campaigns:** the same bad domain seen on two or more computers is grouped.
-- **Linux and Windows agents** using only the Python standard library. Offline spool if the manager is down.
-- **DNS blocking:** manual (from an alert or the Blocks page) or automatic above a score you choose. Reversible, with expiry.
-- **Dashboard:** Overview, Alerts, Agents, Blocks, Logs, Settings, audit trail. Plain HTML, CSS and JS.
-- **Security by default:** forced password change, hashed passwords and keys, one-time install tokens, login rate limit, sandboxed Linux service.
-
-## How it works
-
-```mermaid
-flowchart LR
-    A["Agent (Linux / Windows)<br/>capture DNS, send metadata"] -->|batches| M["Manager<br/>FastAPI + SQLite"]
-    M --> E["Engine<br/>fast + slow profiles<br/>7 indicators, score"]
-    E --> D["Dashboard<br/>alerts, evidence, campaigns"]
-    D -->|block| B["Block list"]
-    B -->|heartbeat| A
-```
-
-**Agent:** captures DNS packets (port 53), pairs each query with its response, drops loopback, manager and trusted traffic,
-and sends a batch every 10 seconds (name, type, time, sizes, resolver; never content). Every minute it fetches its settings
-and block list.
-
-**Manager:** authenticates the agent, stores the records, groups them by *host + registered domain*, measures the seven
-indicators and writes alerts with the evidence behind them.
-
-### Scoring
-
-Each indicator becomes a strength from 0 to 1 using a linear ramp. Default fast-profile values:
-
-| Indicator | Measures | Weight | 0 at | 1 at |
-|---|---|---|---|---|
-| Entropy | Randomness of subdomain text (bits) | 0.20 | 3.0 | 4.5 |
-| Depth | Average number of subdomain labels | 0.10 | 2 | 4 |
-| Record types | Share of TXT, NULL, CNAME, MX | 0.15 | 5% | 30% |
-| Frequency | Queries per minute to the domain | 0.15 | 10 | 50 |
-| Timing | Variation of the gaps (low = regular) | 0.15 | 0.5 | 0.1 |
-| Unique subdomains | Number of different names | 0.15 | 20 | 200 |
-| Data volume | Characters of unique subdomain text | 0.10 | 500 | 5000 |
+A centralized, multi-signal DNS tunneling detection system.
+Lightweight **Linux and Windows** agents capture real DNS traffic and send metadata to one manager.
+The manager can also **block** a domain on the machines (by hand, or automatically above a score you choose).
+The manager scores every (host, domain) pair with 7 signals, 24/7, and shows explainable alerts in a web dashboard.
 
 ```
-score = 100 x sum(weight x strength)
+Linux / Windows agent ──(JSON over HTTP)──▶ Manager (API + engine + SQLite + dashboard)
+ raw capture, all interfaces            fast profile  (5 min window)  → noisy tunnels
+ pairs query + response                 slow profile  (24 h window)   → stealthy tunnels
+ spools to disk if manager is down      alerts + evidence + campaigns
 ```
-
-An alert needs at least **2 strong indicators** (strength 0.5 or more) in the fast profile and 3 in the slow profile.
-Severity: **Low** from 40, **Medium** from 60, **High** from 80. Weights, thresholds, windows and trusted domains
-are all editable in **Settings**.
-
-## Screenshots
-
-| Sign in | Overview |
-|---|---|
-| ![Sign in](docs/screenshots/login.png) | ![Overview](docs/screenshots/overview.png) |
-
-| Alerts | Alert details |
-|---|---|
-| ![Alerts](docs/screenshots/alerts.png) | ![Alert details](docs/screenshots/alert-detail.png) |
-
-![Add an agent](docs/screenshots/add-agent.png)
 
 ## Quick start
 
-### 1. Manager (any Linux machine with Python 3.8+)
+**1. Manager** (any Linux machine with Python 3.8+)
 
 ```bash
-git clone https://github.com/HusnainZargar/DNSHollow.git
-cd DNSHollow
 bash run.sh                          # sets everything up and starts it
-sudo bash run.sh --install-service   # optional: run 24/7 and start at boot
+sudo bash run.sh --install-service   # optional: run 24/7, start at boot
 ```
 
-Options: `--host`, `--port 9000`, `--reset-password`.
+**2. Sign in.** The first start prints a **temporary login** (username `admin`) in the terminal and saves it in
+`data/initial-credentials.txt`. Open the dashboard, sign in, and you are asked to choose your own password
+before anything else.
 
-On the first start the terminal prints a **temporary login** (user `admin`), also saved in `data/initial-credentials.txt`.
-Open the dashboard and you will be asked to choose your own password.
+> **First time here?** Use the temporary login printed in the terminal where the manager started (also saved in
+> `data/initial-credentials.txt`). You will be asked to choose your own password.
+>
+> **Forgot your password?** On the manager machine run `sudo bash run.sh --reset-password`. It prints a new temporary
+> password, and you choose your own at the next sign-in. (This help is only here, it is not shown in the dashboard.)
 
-> **Forgot your password?** On the manager machine run `sudo bash run.sh --reset-password`.
+**3. Add an agent**: **Agents** page → type a name → copy the install command →
+run it as root on the Linux machine you want to monitor. It downloads the agent from the manager,
+checks its SHA-256, registers with a one-time token, runs a self-check and installs a systemd service
+(runs as a normal user with only `CAP_NET_RAW`, restarts on crash, starts at boot).
+Use the manager's **LAN address** in the command (not `localhost`).
+Remove an agent: `curl -fsSL http://MANAGER:8000/install/linux.sh | sudo bash -s -- --uninstall`
 
-### 2. Add an agent
+**3b. Windows agent**: on the **Agents** page pick the **Windows** tab and copy the PowerShell command. Run it in an
+**Administrator PowerShell**. Needs **Python 3.8+ installed for all users** (`winget install -e --id Python.Python.3.12 --scope machine`).
+It downloads the agent, checks its SHA-256, registers with the one-time token, runs a self-check (including a real test DNS
+lookup) and creates a Scheduled Task that runs as SYSTEM at boot and restarts on a crash. Log: `C:\ProgramData\DNSHollow\agent.log`.
+Remove: same command with `-Uninstall` instead of `-Server/-Token/-Sha256` (keep `-Server`).
 
-Open **Agents**, type a name, pick the **Linux** or **Windows** tab and copy the command. Use the manager's **LAN address**,
-not `localhost`. The command works once and expires after 15 minutes.
-
-| | Linux | Windows |
-|---|---|---|
-| Run as | `root` | Administrator PowerShell |
-| Needs | Python 3.8+ | Python 3.8+ installed for all users (`winget install -e --id Python.Python.3.12 --scope machine`) |
-| Runs as | systemd service, non-root user | Scheduled Task as SYSTEM, starts at boot |
-| Capture | Raw `AF_PACKET` socket with a kernel filter | Raw IPv4 socket per local address (`SIO_RCVALL`) |
-| Remove | same command with `--uninstall` | same command with `-Uninstall` |
-| Logs | `journalctl -u dnshollow-agent` | `C:\ProgramData\DNSHollow\agent.log` |
-
-Both installers verify the SHA-256 of the download, register with the one-time token and run a self-check before starting.
+**4. Watch**: Overview → Alerts. The engine already runs by itself, 24/7. **Check now** only forces an immediate run.
 
 ## Blocking DNS
 
 | Where | What |
 |---|---|
-| Alert panel | **Block on this computer** or **Block on all computers** |
-| **Blocks** page | Block any domain by hand for 1 h, 24 h, 7 d or until removed; unblock |
-| **Settings > Blocking** | Master switch, **auto-block** on/off (off by default), score level (default 90), scope, duration (default 24 h) |
+| **Alert → "Block on this computer / all computers"** | one click, from the alert panel |
+| **Blocks page** | block any domain by hand (one computer or all, for 1 h / 24 h / 7 d / until removed), see what is blocked, unblock |
+| **Settings → Blocking** | master switch, **auto-block** on/off, score level (default 90), scope (one computer / all), duration (default 24 h) |
 
-Agents installed with blocking enabled (ticked by default in the install command) make the computer drop DNS for the domain
-**and all its subdomains**.
+How it works: the manager keeps the block list. Agents installed **with blocking enabled** (the install command has it ticked by default;
+`--enable-blocking` on Linux, `-EnableBlocking` on Windows) fetch their list on the heartbeat (and within seconds when it changes) and make the
+machine drop DNS for the domain **and all its subdomains**. The dashboard shows per agent whether it is enforcing or why it cannot.
 
 | OS | Method | Needs |
 |---|---|---|
-| Linux | Own iptables chain `DNSHOLLOW` linked from `OUTPUT`; drops port 53 packets that contain the domain name (IPv4 and IPv6) | `CAP_NET_ADMIN` (added by `--enable-blocking`), `iptables` |
-| Windows | NRPT rules (comment `DNSHollow`) send the domain to a dead resolver (127.0.0.1) | Administrator or SYSTEM |
+| Linux | own iptables chain `DNSHOLLOW` (jumped to from `OUTPUT`); drops port-53 packets that contain the domain name. IPv4 + IPv6 | `CAP_NET_ADMIN` (added to the service by `--enable-blocking`), `iptables` + `iptables-restore` |
+| Windows | NRPT rules (comment `DNSHollow`) send the domain to a dead resolver (127.0.0.1) so it never resolves | Administrator / SYSTEM |
 
-**Safety rules:** only registered domains can be blocked (never `com`, `co.uk` or an IP address); trusted domains and the
-manager's own address are never blocked; auto-block acts only on alerts nobody has reviewed; *Not a threat*, *Trust this domain*
-and *Unblock* lift blocks; timed blocks expire by themselves. Emergency removal on a computer:
-`python -m dnshollow_agent --unblock-all`.
+Safety rules: only registered domains can be blocked (never `com` or `co.uk`, never an IP), trusted domains and the manager's own address are
+never blocked, auto-block only acts on alerts nobody has reviewed, and **Not a threat**, **Trust this domain** and **Unblock** lift blocks
+(Unblock also marks the open alert "looking into it" so auto-block does not re-block it). Timed blocks expire by themselves. Rules stay in
+place if the manager is unreachable; the uninstallers remove them (`python -m dnshollow_agent --unblock-all` does it by hand).
+
+Limits: software that talks straight to its own DNS server bypasses the **Windows** method (NRPT only governs the system resolver); a
+Windows Group Policy NRPT overrides local rules; DNS over HTTPS/TLS is invisible to both methods; Linux matching can miss names split over
+several TCP segments. Dropped queries never reach the agent's capture, so a blocked tunnel simply goes quiet and its alert expires.
 
 ## Testing with fake traffic
 
-`tools/fake_dns_traffic.py` sends made-up DNS queries (reserved `.test` names) at different danger levels, so you can test
-alerts, campaigns and auto-block without a real attack.
+`tools/fake_dns_traffic.py` sends made-up DNS queries to the manager (no real tunnel needed), at different danger levels:
 
 ```bash
-python3 tools/fake_dns_traffic.py all --server http://127.0.0.1:8000 --admin-key "$(cat data/admin.key)"
-python3 tools/fake_dns_traffic.py high --server http://127.0.0.1:8000 --admin-key "$(cat data/admin.key)" --loop 120
+# the admin key is the DNSHOLLOW_ADMIN_KEY the manager was started with
+python3 tools/fake_dns_traffic.py all  --server http://127.0.0.1:8000 --admin-key YOUR_KEY
+python3 tools/fake_dns_traffic.py high --server http://127.0.0.1:8000 --admin-key YOUR_KEY --loop 120   # keep it alive
 ```
 
-| Level | Imitates | Expected |
+| Level | What it imitates | You should see |
 |---|---|---|
-| `benign` | Normal browsing | No alert |
-| `low` | Busy hash-named CDN | Low (about 47) |
-| `medium` | TXT-heavy, fairly regular | Medium (about 69) |
-| `high` | iodine / dnscat2 style | High (about 85) |
-| `critical` | Everything wrong at once | High, 100 (passes the default auto-block level) |
-| `slow` | Stealth beacon, one query per ~22 min | Slow profile alert |
-| `campaign` | One bad domain on three computers | High alerts and a campaign |
+| `benign` | normal browsing | nothing |
+| `low` | busy hash-named CDN, A records | Low alert (~45) |
+| `medium` | TXT-heavy, fairly regular | Medium alert (~69) |
+| `high` | noisy tunnel (iodine / dnscat2) | High alert (~85) |
+| `critical` | everything wrong at once | High, score 100 (passes the default auto-block level 90) |
+| `slow` | stealth beacon, 1 query / ~22 min | alert from the slow profile (up to 5 min) |
+| `campaign` | one bad domain from 3 computers | 3 High alerts + a Campaign card |
+| `all` | all of the above, spread over 3 fake computers | everything |
 
-Fake agents cannot enforce blocks. For a real blocking test, install a real agent and block a domain you own.
-On Windows check with `Resolve-DnsName` or the browser, not `nslookup` (it skips the Windows resolver policy).
+It creates the test agents `sim-linux`, `sim-windows`, `sim-extra` and saves their keys in `.fake-dns-keys.json` for the next run.
+Use `--dry-run` to see what would be sent. To test **auto-block**: Settings > Blocking > turn on auto-block, then send `critical`.
+To test **manual block**: open any alert from `high` and click Block. Fake agents cannot enforce blocks (they are not real agents),
+so the block shows up on the Blocks page but nothing is dropped. For a real enforcement test, use a real Linux/Windows agent.
+The levels are checked by `tests/test_fake_traffic.py`, so an engine change that moves them shows up as a failing test.
+
+## The dashboard
+
+| Page | What it is for |
+|---|---|
+| Overview | status banner, getting-started steps, alert counts, campaigns, engine status |
+| Alerts | plain-language alert cards. Click one for a **short view** (what happened, what to do), then **Show detailed view** (score breakdown, timeline, sample requests) |
+| Agents | add Linux or Windows agents, copy install commands, see who is online and whether blocking works. Click one for short then detailed view |
+| Blocks | block / unblock domains, see what is blocked where and why, recent history |
+| Logs | **DNS requests** the agents sent (search, filters, live), **agent activity**, and the **audit trail** (who signed in, who changed what) |
+| Settings | one-click sensitivity (Relaxed / Balanced / Strict), trusted domains, both detection checks, clue weights and thresholds, agent options, retention |
+| My account | change password, sign out |
+
+A **Help & glossary** panel explains every term. Passwords are stored as salted PBKDF2 hashes; sessions are
+HttpOnly + SameSite=Strict cookies; failed sign-ins are rate-limited. Scripts can still use the API with the
+`X-Admin-Key` header (key in `data/admin.key`).
+
+## What it looks at
+
+| Signal | Idea |
+|---|---|
+| Entropy | random-looking subdomains (base32/64) |
+| Subdomain depth | unusually deep label chains |
+| Record types | many TXT / NULL / CNAME / MX |
+| Query rate | many queries to one domain per minute |
+| Beacon timing | machine-like regular intervals |
+| Unique subdomains | the set of names keeps growing |
+| Data volume | characters of data carried in subdomains |
+
+Each signal gives a strength 0–1, weights are auto-balanced to 100%, score = 0–100.
+Every alert lists the evidence behind the score. All settings (weights, thresholds, windows, trusted domains)
+are edited in the dashboard **Settings** page. Trusted domains are skipped completely.
+
+## Windows agent facts
+
+- Standard library only, no driver, no Npcap: one raw IPv4 socket per local address (`SIO_RCVALL`), rescanned every 30 s (VPN / new Wi-Fi are picked up).
+- **IPv4 only** (Windows raw sockets cannot sniff IPv6). No kernel filter, so Python drops non-DNS packets itself; fine on a workstation.
+- Direction comes from the source address (Windows gives no in/out flag). `--check` does a real lookup of a random `.invalid` name and confirms the query was seen leaving.
+
+## Agent facts
+
+- One raw socket on **all interfaces** with a kernel filter: only UDP/TCP port 53 reaches Python.
+- Queries sent **by this machine** only. Traffic to **loopback** resolvers (127.0.0.53) is ignored so each query is counted once, on the wire.
+- Each DNS transaction becomes one record: name, type, **resolver IP**, protocol, query bytes, response bytes, response code. No answer content is stored.
+- Manager down? Batches wait in `/var/lib/dnshollow` (size-capped, oldest dropped first) and are resent with the same batch id.
+- Limits: DNS over HTTPS/TLS is not visible; DNS messages split over several TCP segments or IP fragments are skipped.
 
 ## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-python3 -m pytest -q            # 243 tests; the real-capture tests need root (raw sockets)
-bash tests/ui/run.sh            # optional: drives the dashboard in a simulated browser (needs node)
+pytest                      # real-capture tests run only as root (they use raw sockets)
+bash tests/ui/run.sh        # optional: drives the real dashboard in a simulated browser (needs node)
 ```
 
-## Project layout
+## Layout
 
 ```
-agent/dnshollow_agent/   agent for Linux and Windows (standard library only)
-  capture.py, capture_win.py   packet capture      blocker.py   DNS blocking
-  dnsparse.py, pairing.py      DNS decoding        spool.py     offline buffer
-manager/api/             REST API (docs at /docs)
-manager/engine/          features, scorer, runner, blocking rules
-manager/dashboard/       web dashboard (plain HTML, CSS, JS)
-manager/dist/            installers served to agents (install-linux.sh, install-windows.ps1)
-tools/                   fake DNS traffic generator
-tests/                   automated tests
-run.sh                   one-command setup and start
+agent/dnshollow_agent/   the agent for Linux and Windows (standard library only; blocker.py = block DNS, capture_win.py = Windows capture)
+manager/api/             REST API   (docs at /docs; set DNSHOLLOW_DOCS=0 to hide)
+manager/engine/          features, scorer, runner
+manager/dashboard/       the web dashboard (plain HTML/CSS/JS, no libraries)
+manager/dist/            installer scripts served to agents (install-linux.sh, install-windows.ps1)
+tools/                   demos and a fake-agent simulator
 ```
-
-## Limitations
-
-- Thresholds were tuned and tested on **synthetic traffic**. Tune on real traffic before relying on auto-block.
-- The Windows agent sees **IPv4** DNS only. DNS over HTTPS and TLS are not visible to either agent.
-- The Windows block affects software that uses the Windows resolver. Group Policy resolver rules override local ones.
-- One administrator account. The manager serves plain HTTP: put it behind HTTPS (for example a reverse proxy) outside a lab.
-- Email security (SPF, DKIM, DMARC checks) is not implemented yet.
-
-## Roadmap
-
-Multi-user roles and MFA, built-in HTTPS, DNS over HTTPS detection, IPv6 capture on Windows, SPF/DKIM/DMARC and DNSSEC checks,
-syslog export of alerts.
-
-## Responsible use
-
-Use DNSHollow only on networks and computers you own or are allowed to monitor. Blocking can interrupt real services, so keep
-auto-block off until you have tuned the settings.
-
-## Author
-
-**Muhammad Husnain Zargar**, BS Cybersecurity, Riphah International University.

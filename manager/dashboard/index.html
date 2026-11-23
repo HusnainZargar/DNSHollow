@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNSHollow</title><link rel="stylesheet" href="/static/app.css"></head>
+<body>
+
+<!-- sign in -->
+<div id="screen-login" class="screen hide">
+  <form id="lf" class="card auth" autocomplete="on">
+    <div class="brand big"><span class="logo-mark"></span>DNSHollow</div>
+    <p class="mut">Sign in to see what is happening in your DNS traffic.</p>
+    <label>Username<input id="lu" autocomplete="username" required autofocus></label>
+    <label>Password<input id="lp" type="password" autocomplete="current-password" required></label>
+    <button class="btn p wide">Sign in</button>
+    <p id="lerr" class="err" role="alert"></p>
+  </form>
+</div>
+
+<!-- forced password change -->
+<div id="screen-change" class="screen hide">
+  <div class="card auth">
+    <div class="brand big"><span class="logo-mark"></span>DNSHollow</div>
+    <h2>Choose your own password</h2>
+    <p class="mut">You signed in with a temporary password. Pick a new one before you continue.</p>
+    <div id="force-form"></div>
+    <button id="force-out" class="btn link" type="button">Sign out</button>
+  </div>
+</div>
+
+<!-- the app -->
+<div id="app" class="hide">
+  <aside id="side">
+    <div class="brand"><span class="logo-mark"></span>DNSHollow</div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <button class="navbtn" id="help-btn" type="button"></button>
+      <div class="who"><span class="avatar" id="avatar"></span><span id="who-name"></span></div>
+    </div>
+  </aside>
+  <div id="main">
+    <header id="top">
+      <div><h1 id="title"></h1><p id="subtitle" class="mut"></p></div>
+      <div class="row"><button id="run" class="btn hide" title="The detection engine already runs by itself, 24/7. This forces a check right now.">Check now</button></div>
+    </header>
+    <main>
+      <section id="v-overview" class="hide"></section>
+      <section id="v-alerts" class="hide"></section>
+      <section id="v-agents" class="hide"></section>
+      <section id="v-blocks" class="hide"></section>
+      <section id="v-logs" class="hide"></section>
+      <section id="v-settings" class="hide"></section>
+      <section id="v-account" class="hide"></section>
+    </main>
+  </div>
+  <div id="scrim" class="hide"></div>
+  <aside id="drawer" class="hide" role="dialog" aria-modal="true"></aside>
+</div>
+<div id="toast" role="status"></div>
+<script src="/static/app.js"></script>
+</body></html>
